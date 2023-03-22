@@ -1,0 +1,181 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## New Take
+
+```{r}
+
+library(tidyverse)
+library(caret)
+library(ggplot2)
+library(rpart)
+library(Amelia)
+library(rpart.plot)
+library(corrplot)
+# install.packages('grpreg')
+library(grpreg)
+
+```
+
+```{r}
+# Load in data
+data <- read_csv('filtered.csv')
+
+nozeros <- data %>% filter(t18_gis_rx_pwd_2020 != 0, na.rm = TRUE)
+nozeros <- nozeros %>% filter(t18_a5y_b01001001_c_2018 > 10, na.rm =TRUE)
+nozeros
+nozeros$t18_gis_rx_pwd_2020_lg <- log(nozeros$t18_gis_rx_pwd_2020)
+```
+
+
+```{r}
+plot(density((nozeros$t18_gis_rx_pwd_2020_lg)))
+shapiro.test(nozeros$t18_gis_rx_pwd_2020_lg)
+```
+
+
+```{r}
+nozeros$qp <- as.factor(ntile(nozeros$t18_a5y_b17001002_p_2018, 4))
+nozeros$qblk <- as.factor(ntile(nozeros$t18_a5y_b02001003_p_2018, 4))
+nozeros$qhisp <- as.factor(ntile(nozeros$t18_a5y_b03003003_p_2018, 4))
+```
+
+```{r}
+nozeros[c('qblk', 't18_a5y_b02001003_p_2018')]
+```
+
+```{r}
+nozeros$col <- nozeros$t18_a5y_b15003021_p_2018 + 
+  nozeros$t18_a5y_b15003022_p_2018 + 
+  nozeros$t18_a5y_b15003023_p_2018 + 
+  nozeros$t18_a5y_b15003024_p_2018 + 
+  nozeros$t18_a5y_b15003025_p_2018 
+nozeros$qcol <- as.factor(ntile(nozeros$col,4)) 
+```
+
+```{r}
+summary(nozeros$t18_a5y_b19013001_m_2018)
+```
+
+
+
+```{r}
+# Proportion Poverty (quartiles treated as factor variables)
+fitpov <- glm(t18_gis_rx_pwd_2020_lg ~ qp, data=nozeros)
+summary(fitpov)
+
+with(summary(fitpov), pchisq(null.deviance-deviance, df[2]))
+```
+
+```{r}
+# Proportion >= Associates degree (quartiles treated as factor variables)
+fitcol <- glm(t18_gis_rx_pwd_2020_lg ~ qcol, data=nozeros)
+summary(fitcol)
+with(summary(fitcol), 1 - deviance/null.deviance)
+```
+
+```{r}
+# Proportion Black
+fitblk <- glm(t18_gis_rx_pwd_2020_lg ~ qblk, data=nozeros)
+summary(fitblk)
+with(summary(fitblk), 1 - deviance/null.deviance)
+```
+
+```{r}
+# Proportion Hispanic
+fithisp <- glm(t18_gis_rx_pwd_2020_lg ~ qhisp, data=nozeros)
+summary(fithisp)
+with(summary(fithisp), 1 - deviance/null.deviance)
+```
+
+
+```{r}
+
+t <- merge(data.frame(coef(fitpov)), data.frame(confint(fitpov)), by=0)[-1,]
+t$pct <- 100*(exp(t[,2])-1)
+t$pct25 <- 100*(exp(t[,3])-1)
+t$pct975 <- 100*(exp(t[,4])-1)
+
+t
+```
+
+```{r}
+library(cowplot)
+```
+
+```{r}
+makepointrange <- function (fitfunc, name) {
+  fitdf <- merge(data.frame(coef(fitfunc)), data.frame(confint(fitfunc)), by=0)[-1,]
+  fitdf$pct <- 100*(exp(fitdf[,2])-1)
+  fitdf$pct25 <- 100*(exp(fitdf[,3])-1)
+  fitdf$pct975 <- 100*(exp(fitdf[,4])-1)
+  fitdf$names <- c('2nd Quartile', '3rd Quartile', '4th Quartile\n(highest %)')
+  ggplot(fitdf, aes_string(x=colnames(fitdf)[5], y=colnames(fitdf)[8], 
+                        xmin=colnames(fitdf)[6], xmax=colnames(fitdf)[7])) + 
+    geom_pointrange(fill='black', color='black', shape=21, fatten = 2, size = 0.5) + 
+    geom_vline(xintercept = 0, linetype=2) + 
+    xlab('% Distance') + 
+    ylab('') +
+    theme_cowplot(12) +
+    theme_minimal_vgrid(12) +
+    xlim(-100,100) +
+    ggtitle(name) + 
+    theme(plot.title = element_text(hjust = 0.5)) +
+    panel_border()
+}
+
+p1 <- makepointrange(fitpov, '% Poverty')
+p2 <- makepointrange(fitcol, '% Higher Education')
+
+p3 <- makepointrange(fitblk, '% Black/African American')
+p4 <- makepointrange(fithisp, '% Hispanic/Latino')
+
+o <- plot_grid(p1, p2, p3, p4, labels = c('A', 'B', 'C', 'D'), label_size = 12, align='v')
+o
+```
+
+```{r}
+ggsave('../fig2.png', o, width=10, height=6, dpi=300)
+```
+
+```{r}
+require(broom) # for tidy()
+require(knitr) # for kable()
+```
+
+```{r}
+summary(fithisp)
+```
+
+```{r}
+write_csv(nozeros, 'nozeros.csv')
+```
+
+```{r}
+kable(nozeros %>% group_by(qhisp) %>% summarize(Count=n(),
+                                                Mean = mean(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          `Standard Deviation`=sd(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          Median = median(t18_gis_rx_pwd_2020, na.rm=TRUE))
+      )
+```
+
+```{r}
+kable(nozeros %>% group_by(qblk) %>% summarize(Count=n(),Mean = mean(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          `Standard Deviation`=sd(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          Median = median(t18_gis_rx_pwd_2020, na.rm=TRUE)))
+```
+
+
+```{r}
+kable(nozeros %>% group_by(qp) %>% summarize(Count=n(),Mean = mean(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          `Standard Deviation`=sd(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          Median = median(t18_gis_rx_pwd_2020, na.rm=TRUE)))
+```
+
+```{r}
+kable(nozeros %>% group_by(qcol) %>% summarize(Count=n(),Mean = mean(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          `Standard Deviation`=sd(t18_gis_rx_pwd_2020, na.rm=TRUE),
+                                          Median = median(t18_gis_rx_pwd_2020, na.rm=TRUE)))
+```
